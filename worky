@@ -1,0 +1,502 @@
+#!/usr/bin/env bash
+# worky - pick up to 4 directories under PROJECTS_DIR and open each in its own
+# Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
+set -uo pipefail
+
+VERSION="1.0.6"
+
+COMMAND=""
+DIR_FLAG=""
+TAB_FLAG=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+  -c | --command)
+    COMMAND="${2:-}"
+    shift 2
+    ;;
+  -d | --dir)
+    DIR_FLAG="${2:-}"
+    shift 2
+    ;;
+  -t | --tab)
+    TAB_FLAG=1
+    shift
+    ;;
+  -v | --version)
+    echo "worky $VERSION"
+    exit 0
+    ;;
+  -h | --help)
+    echo "Usage: worky [-c COMMAND] [-d PATH] [-t]"
+    echo "  -c COMMAND   type COMMAND into each opened terminal and press enter"
+    echo "  -d PATH      open a single terminal for PATH (skips the picker), tab-colored from rotation"
+    echo "  -t           (with -d) also open a second tab in the same window, same folder"
+    echo "  -v           print version ($VERSION)"
+    exit 0
+    ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    exit 1
+    ;;
+  esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COLORS=("#e06c75" "#61afef" "#98c379" "#e5c07b")
+COLOR_STATE_FILE="$SCRIPT_DIR/.worky-color-state"
+
+next_color() {
+  local last=-1
+  [ -f "$COLOR_STATE_FILE" ] && last=$(<"$COLOR_STATE_FILE")
+  local idx=$(((last + 1) % ${#COLORS[@]}))
+  echo "$idx" >"$COLOR_STATE_FILE"
+  echo "${COLORS[$idx]}"
+}
+
+if [ -n "$DIR_FLAG" ]; then
+  if [ ! -d "$DIR_FLAG" ]; then
+    echo "Not a directory: $DIR_FLAG" >&2
+    exit 1
+  fi
+  dirname="$(basename "$DIR_FLAG")"
+  winpath=$(wslpath -w "$(cd "$DIR_FLAG" && pwd)")
+  color=$(next_color)
+
+  if [ -z "$COMMAND" ]; then
+    wt.exe -w new -p Ubuntu --title "$dirname" --tabColor "$color" --suppressApplicationTitle -d "$winpath"
+    if [ "$TAB_FLAG" -eq 1 ]; then
+      sleep 1
+      wt.exe -w last new-tab -p Ubuntu --title "$dirname" --tabColor "$color" --suppressApplicationTitle -d "$winpath"
+    fi
+    exit 0
+  fi
+
+  TMP_DIR="$SCRIPT_DIR/.worky-tmp"
+  mkdir -p "$TMP_DIR"
+  PS1_FILE="$TMP_DIR/launch-d.ps1"
+  esc_name=${dirname//\'/\'\'}
+  esc_path=${winpath//\'/\'\'}
+  esc_color=${color//\'/\'\'}
+  esc_command=${COMMAND//\'/\'\'}
+  cat >"$PS1_FILE" <<PSEOF
+Add-Type @"
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+[StructLayout(LayoutKind.Sequential)]
+public struct INPUT { public uint type; public KEYBDINPUT ki; public ulong pad; }
+
+public class WorkyWin32D {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+  public const byte VK_MENU = 0x12;
+  public const byte VK_RETURN = 0x0D;
+  public const uint KEYEVENTF_KEYUP = 0x2;
+  public const uint KEYEVENTF_UNICODE = 0x4;
+  public static List<IntPtr> FindWindowsByClass(string className) {
+    var result = new List<IntPtr>();
+    EnumWindows((hWnd, lParam) => {
+      if (IsWindowVisible(hWnd)) {
+        var cb = new StringBuilder(256);
+        GetClassName(hWnd, cb, cb.Capacity);
+        if (cb.ToString() == className) { result.Add(hWnd); }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return result;
+  }
+  public static string GetTitle(IntPtr hWnd) {
+    var sb = new StringBuilder(512);
+    GetWindowText(hWnd, sb, sb.Capacity);
+    return sb.ToString();
+  }
+  public static void Focus(IntPtr hWnd) {
+    keybd_event(VK_MENU, 0, 0, UIntPtr.Zero);
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    SetForegroundWindow(hWnd);
+    System.Threading.Thread.Sleep(200);
+  }
+  public static void TypeText(string text) {
+    var inputs = new List<INPUT>();
+    foreach (char c in text) {
+      var down = new INPUT(); down.type = 1; down.ki.wVk = 0; down.ki.wScan = c; down.ki.dwFlags = KEYEVENTF_UNICODE;
+      var up = new INPUT(); up.type = 1; up.ki.wVk = 0; up.ki.wScan = c; up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+      inputs.Add(down); inputs.Add(up);
+    }
+    var arr = inputs.ToArray();
+    if (arr.Length > 0) { SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT))); }
+  }
+  public static void PressEnter() {
+    keybd_event(VK_RETURN, 0, 0, UIntPtr.Zero);
+    keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+  }
+  public static void RunCommand(IntPtr hWnd, string command) {
+    Focus(hWnd);
+    TypeText(" ");
+    System.Threading.Thread.Sleep(100);
+    TypeText(command);
+    System.Threading.Thread.Sleep(100);
+    PressEnter();
+  }
+}
+"@
+\$seen = [WorkyWin32D]::FindWindowsByClass("CASCADIA_HOSTING_WINDOW_CLASS")
+Start-Process wt.exe -ArgumentList @('-w','new','-p','Ubuntu','--title','$esc_name','--tabColor','$esc_color','--suppressApplicationTitle','-d','$esc_path')
+\$found = [IntPtr]::Zero
+\$deadline = (Get-Date).AddSeconds(10)
+while ((Get-Date) -lt \$deadline -and \$found -eq [IntPtr]::Zero) {
+  Start-Sleep -Milliseconds 150
+  \$current = [WorkyWin32D]::FindWindowsByClass("CASCADIA_HOSTING_WINDOW_CLASS")
+  foreach (\$h in \$current) {
+    if (-not (\$seen -contains \$h)) {
+      if ([WorkyWin32D]::GetTitle(\$h) -eq '$esc_name') { \$found = \$h; break }
+    }
+  }
+}
+if (\$found -ne [IntPtr]::Zero) {
+  [WorkyWin32D]::RunCommand(\$found, '$esc_command')
+} else {
+  Write-Warning "Could not locate window for '$esc_name' to run command."
+}
+PSEOF
+
+  WIN_PS1=$(wslpath -w "$PS1_FILE")
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WIN_PS1" </dev/null
+  rm -rf "$TMP_DIR"
+  if [ "$TAB_FLAG" -eq 1 ]; then
+    wt.exe -w last new-tab -p Ubuntu --title "$dirname" --tabColor "$color" --suppressApplicationTitle -d "$winpath"
+  fi
+  exit 0
+fi
+
+PROJECTS_DIR="$(pwd)"
+MAX_SELECT=4
+TMP_DIR="$SCRIPT_DIR/.worky-tmp"
+
+QUAD_NAMES=("top-left" "top-right" "bottom-left" "bottom-right")
+
+TEAL='\033[38;5;30m'
+SEL='\033[38;5;114m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+# --- capture the monitor the caller's terminal is currently on, before we open anything ---
+read -r MON_X MON_Y MON_W MON_H < <(powershell.exe -NoProfile -Command '
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WorkyMon {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+}
+"@
+$h = [WorkyMon]::GetForegroundWindow()
+$scr = [System.Windows.Forms.Screen]::FromHandle($h)
+$wa = $scr.WorkingArea
+Write-Output "$($wa.X) $($wa.Y) $($wa.Width) $($wa.Height)"
+' </dev/null | tr -d '\r')
+
+if [ -z "${MON_X:-}" ]; then
+  echo "Could not determine target monitor via PowerShell." >&2
+  exit 1
+fi
+
+mapfile -t DIRS < <(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+if [ "${#DIRS[@]}" -eq 0 ]; then
+  echo "No directories found in $PROJECTS_DIR" >&2
+  exit 1
+fi
+
+cursor=0
+selected=()
+
+is_selected() {
+  local idx=$1 s
+  for s in "${selected[@]:-}"; do
+    [ "$s" == "$idx" ] && return 0
+  done
+  return 1
+}
+
+selection_rank() {
+  local idx=$1 i=1 s
+  for s in "${selected[@]:-}"; do
+    if [ "$s" == "$idx" ]; then
+      echo "$i"
+      return
+    fi
+    i=$((i + 1))
+  done
+}
+
+select_cursor() {
+  is_selected "$cursor" && return
+  [ "${#selected[@]}" -lt "$MAX_SELECT" ] && selected+=("$cursor")
+}
+
+deselect_cursor() {
+  is_selected "$cursor" || return
+  local new=() s
+  for s in "${selected[@]}"; do
+    [ "$s" != "$cursor" ] && new+=("$s")
+  done
+  selected=("${new[@]:-}")
+}
+
+draw() {
+  clear
+  echo -e "${BOLD}worky${RESET} - ${PROJECTS_DIR}"
+  echo -e "${DIM}up/down move, right select, left deselect, enter launch, q quit${RESET}"
+  echo
+  local i=0 d rank
+  for d in "${DIRS[@]}"; do
+    rank=$(selection_rank "$i")
+    if [ "$i" -eq "$cursor" ]; then
+      printf "%-4s " "${rank:+[$rank]}"
+      echo -e "${TEAL}${BOLD}> ${d}${RESET}"
+    else
+      printf "%-4s " "${rank:+[$rank]}"
+      if [ -n "$rank" ]; then
+        echo -e "${SEL}  ${d}${RESET}"
+      else
+        echo "  ${d}"
+      fi
+    fi
+    i=$((i + 1))
+  done
+  echo
+  echo "Selected: ${#selected[@]}/${MAX_SELECT}"
+}
+
+read_key() {
+  local key rest
+  IFS= read -rsn1 key
+  if [ "$key" == $'\x1b' ]; then
+    IFS= read -rsn2 -t 0.01 rest
+    key+="$rest"
+  fi
+  printf '%s' "$key"
+}
+
+while true; do
+  draw
+  key=$(read_key)
+  case "$key" in
+  $'\x1b[A') cursor=$(((cursor - 1 + ${#DIRS[@]}) % ${#DIRS[@]})) ;;
+  $'\x1b[B') cursor=$(((cursor + 1) % ${#DIRS[@]})) ;;
+  $'\x1b[C') select_cursor ;;
+  $'\x1b[D') deselect_cursor ;;
+  q | Q)
+    clear
+    echo "Cancelled."
+    exit 0
+    ;;
+  "" | $'\n' | $'\r') break ;;
+  esac
+done
+
+clear
+if [ "${#selected[@]}" -eq 0 ]; then
+  echo "No directories selected. Exiting."
+  exit 0
+fi
+
+echo "Launching ${#selected[@]} terminal(s)..."
+
+# Native Windows Snap presets by count, so windows fill the screen with no
+# gaps (mirrors the Snap Layouts flyout): 1=maximize, 2=halves,
+# 3=two stacked + one large, 4=quadrants.
+n="${#selected[@]}"
+case "$n" in
+1) MOVES=("Up") ;;
+2) MOVES=("Left" "Right") ;;
+3) MOVES=("Left+Up" "Left+Down" "Right") ;;
+4) MOVES=("Left+Up" "Right+Up" "Left+Down" "Right+Down") ;;
+esac
+
+mkdir -p "$TMP_DIR"
+PS1_FILE="$TMP_DIR/launch.ps1"
+
+{
+  cat <<'PSHEAD'
+Add-Type @"
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+
+[StructLayout(LayoutKind.Sequential)]
+public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+[StructLayout(LayoutKind.Sequential)]
+public struct INPUT { public uint type; public KEYBDINPUT ki; public ulong pad; }
+
+public class WorkyWin32 {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+  public const byte VK_LWIN = 0x5B;
+  public const byte VK_LEFT = 0x25;
+  public const byte VK_UP = 0x26;
+  public const byte VK_RIGHT = 0x27;
+  public const byte VK_DOWN = 0x28;
+  public const byte VK_MENU = 0x12;
+  public const byte VK_ESCAPE = 0x1B;
+  public const byte VK_RETURN = 0x0D;
+  public const uint KEYEVENTF_KEYUP = 0x2;
+  public const uint KEYEVENTF_UNICODE = 0x4;
+  public static List<IntPtr> FindWindowsByClass(string className) {
+    var result = new List<IntPtr>();
+    EnumWindows((hWnd, lParam) => {
+      if (IsWindowVisible(hWnd)) {
+        var cb = new StringBuilder(256);
+        GetClassName(hWnd, cb, cb.Capacity);
+        if (cb.ToString() == className) { result.Add(hWnd); }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return result;
+  }
+  public static string GetTitle(IntPtr hWnd) {
+    var sb = new StringBuilder(512);
+    GetWindowText(hWnd, sb, sb.Capacity);
+    return sb.ToString();
+  }
+  public static void Focus(IntPtr hWnd) {
+    keybd_event(VK_MENU, 0, 0, UIntPtr.Zero);
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    SetForegroundWindow(hWnd);
+    System.Threading.Thread.Sleep(200);
+  }
+  public static void DismissSnapAssist() {
+    keybd_event(VK_ESCAPE, 0, 0, UIntPtr.Zero);
+    keybd_event(VK_ESCAPE, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(200);
+  }
+  public static void SnapArrow(byte arrowVk) {
+    keybd_event(VK_LWIN, 0, 0, UIntPtr.Zero);
+    keybd_event(arrowVk, 0, 0, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(60);
+    keybd_event(arrowVk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(700);
+  }
+  public static void SnapWindow(IntPtr hWnd, string[] moves) {
+    for (int i = 0; i < moves.Length; i++) {
+      Focus(hWnd);
+      byte vk = 0;
+      switch (moves[i]) {
+        case "Left": vk = VK_LEFT; break;
+        case "Right": vk = VK_RIGHT; break;
+        case "Up": vk = VK_UP; break;
+        case "Down": vk = VK_DOWN; break;
+      }
+      SnapArrow(vk);
+      DismissSnapAssist();
+    }
+  }
+  public static void TypeText(string text) {
+    var inputs = new List<INPUT>();
+    foreach (char c in text) {
+      var down = new INPUT(); down.type = 1; down.ki.wVk = 0; down.ki.wScan = c; down.ki.dwFlags = KEYEVENTF_UNICODE;
+      var up = new INPUT(); up.type = 1; up.ki.wVk = 0; up.ki.wScan = c; up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+      inputs.Add(down); inputs.Add(up);
+    }
+    var arr = inputs.ToArray();
+    if (arr.Length > 0) { SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT))); }
+  }
+  public static void PressEnter() {
+    keybd_event(VK_RETURN, 0, 0, UIntPtr.Zero);
+    keybd_event(VK_RETURN, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+  }
+  public static void RunCommand(IntPtr hWnd, string command) {
+    Focus(hWnd);
+    // After the preceding Snap Assist maneuvering, the very first Unicode
+    // character sent via SendInput to this window is reliably swallowed
+    // (a one-time drop, not a timing race -- waiting longer doesn't help).
+    // Absorb it with a disposable leading space, which bash ignores
+    // syntactically, before typing the real command.
+    TypeText(" ");
+    System.Threading.Thread.Sleep(100);
+    TypeText(command);
+    System.Threading.Thread.Sleep(100);
+    PressEnter();
+  }
+}
+"@
+$items = @(
+PSHEAD
+  idx=0
+  for sel in "${selected[@]}"; do
+    dirname="${DIRS[$sel]}"
+    winpath=$(wslpath -w "$PROJECTS_DIR/$dirname")
+    esc_name=${dirname//\'/\'\'}
+    esc_path=${winpath//\'/\'\'}
+    esc_command=${COMMAND//\'/\'\'}
+    moves_str="${MOVES[$idx]//+/\",\"}"
+    color=$(next_color)
+    printf "  @{ Title='%s'; Color='%s'; Dir='%s'; Command='%s'; X=%d; Y=%d; Moves=@(\"%s\") }\n" \
+      "$esc_name" "$color" "$esc_path" "$esc_command" \
+      "$((MON_X + 40))" "$((MON_Y + 40))" "$moves_str"
+    idx=$((idx + 1))
+  done
+  cat <<'PSTAIL'
+)
+foreach ($it in $items) {
+  $seen = [WorkyWin32]::FindWindowsByClass("CASCADIA_HOSTING_WINDOW_CLASS")
+  Start-Process wt.exe -ArgumentList @(
+    '-w','new','-p','Ubuntu',
+    '--title',$it.Title,
+    '--tabColor',$it.Color,
+    '--suppressApplicationTitle',
+    '-d',$it.Dir
+  )
+  $found = [IntPtr]::Zero
+  $deadline = (Get-Date).AddSeconds(10)
+  while ((Get-Date) -lt $deadline -and $found -eq [IntPtr]::Zero) {
+    Start-Sleep -Milliseconds 150
+    $current = [WorkyWin32]::FindWindowsByClass("CASCADIA_HOSTING_WINDOW_CLASS")
+    foreach ($h in $current) {
+      if (-not ($seen -contains $h)) {
+        if ([WorkyWin32]::GetTitle($h) -eq $it.Title) { $found = $h; break }
+      }
+    }
+  }
+  if ($found -ne [IntPtr]::Zero) {
+    [WorkyWin32]::ShowWindow($found, 9) | Out-Null
+    Start-Sleep -Milliseconds 150
+    # Land the window on the target monitor first; Snap then computes exact geometry.
+    [WorkyWin32]::MoveWindow($found, $it.X, $it.Y, 900, 600, $true) | Out-Null
+    Start-Sleep -Milliseconds 150
+    [WorkyWin32]::SnapWindow($found, $it.Moves)
+    if ($it.Command -ne '') {
+      [WorkyWin32]::RunCommand($found, $it.Command)
+    }
+  } else {
+    Write-Warning "Could not locate window for '$($it.Title)' to position it."
+  }
+}
+PSTAIL
+} >"$PS1_FILE"
+
+WIN_PS1=$(wslpath -w "$PS1_FILE")
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WIN_PS1" </dev/null
+rm -rf "$TMP_DIR"
+
