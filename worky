@@ -3,7 +3,7 @@
 # Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
 set -uo pipefail
 
-VERSION="1.0.11"
+VERSION="1.0.12"
 
 COMMAND=""
 DIR_FLAG=""
