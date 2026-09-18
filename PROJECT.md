@@ -5,7 +5,7 @@ for project directories, with an optional command typed into each on launch.
 
 ## Key facts
 
-- Single-file bash script: `worky` (currently v1.0.7, version string at line 6).
+- Single-file bash script: `worky` (currently v1.0.8, version string at line 6).
 - Docs: `README.md` (usage, flags, examples).
 - Windows-only functionality: drives `wt.exe` / `powershell.exe` from WSL, so it
   cannot run or be tested on plain Linux/macOS.

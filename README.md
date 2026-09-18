@@ -12,8 +12,7 @@ Two modes:
   them into place (maximize / halves / thirds / quadrants depending on how
   many you picked).
 - **Direct mode** (`-d PATH`): skips the picker and opens a single terminal
-  for the given path, optionally with a second tab in the same window
-  (`-t`).
+  for the given path, plus a second "directory" tab in the same window.
 
 Each opened window gets a `--tabColor` from a small rotating palette, and the
 window title is set to the directory's name.
@@ -47,7 +46,7 @@ next to the `worky` script itself.
 ## Usage
 
 ```
-worky [-c COMMAND] [-d PATH] [-t]
+worky [-c COMMAND] [-d PATH]
 ```
 
 ### Flags
@@ -55,14 +54,12 @@ worky [-c COMMAND] [-d PATH] [-t]
 | Flag | Long form | Description |
 |------|-----------|-------------|
 | `-c COMMAND` | `--command COMMAND` | Type `COMMAND` into each opened terminal and press Enter, once the shell inside it is ready. Works in both picker mode and direct mode. |
-| `-d PATH` | `--dir PATH` | Open a single terminal for `PATH` directly, skipping the interactive picker. The tab color still advances through the normal rotation. |
-| `-t` | `--tab` | Only meaningful together with `-d`. Also opens a second tab in the *same* window, pointed at the same folder, titled "`<dirname> directory`". |
+| `-d PATH` | `--dir PATH` | Open a single terminal for `PATH` directly, skipping the interactive picker. The tab color still advances through the normal rotation. Also opens a second tab in the *same* window, pointed at the same folder, titled "`<dirname> directory`", left at the terminal's default color. |
 | `-v` | `--version` | Print the script's version and exit. |
 | `-h` | `--help` | Print usage help and exit. |
 
 Notes:
 
-- `-t` has no effect without `-d` (it's silently ignored in picker mode).
 - `PROJECTS_DIR` for the picker is always your current working directory
   (`pwd`) when you run `worky` -- run it from the folder containing the
   project directories you want to choose from.
@@ -130,18 +127,13 @@ Open it and immediately run a command:
 worky -d ~/projects/my-app -c "git status"
 ```
 
-Open it plus a second tab in the same window (e.g. one tab for running a
-dev server, one tab left as a plain shell in the same directory):
+Direct mode always opens a second tab in the same window alongside the first
+(e.g. one tab for running a dev server, one tab left as a plain shell in the
+same directory). Combined with `-c`, the command only runs in the first tab;
+the second tab (`<dirname> directory`) is opened as a plain shell:
 
 ```bash
-worky -d ~/projects/my-app -t
-```
-
-Combine `-d`, `-t`, and `-c` -- the command only runs in the first tab, the
-second tab (`<dirname> directory`) is opened as a plain shell:
-
-```bash
-worky -d ~/projects/my-app -t -c "npm run dev"
+worky -d ~/projects/my-app -c "npm run dev"
 ```
 
 ## How it works (brief)
