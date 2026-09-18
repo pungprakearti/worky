@@ -3,7 +3,7 @@
 # Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
 set -uo pipefail
 
-VERSION="1.0.8"
+VERSION="1.0.9"
 
 COMMAND=""
 DIR_FLAG=""
@@ -480,6 +480,12 @@ foreach ($it in $items) {
     if ($it.Command -ne '') {
       [WorkyWin32]::RunCommand($found, $it.Command)
     }
+    Start-Process wt.exe -ArgumentList @(
+      '-w','last','new-tab','-p','Ubuntu',
+      '--title',"$($it.Title) directory",
+      '--suppressApplicationTitle',
+      '-d',$it.Dir
+    )
   } else {
     Write-Warning "Could not locate window for '$($it.Title)' to position it."
   }
