@@ -3,7 +3,7 @@
 # Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
 set -uo pipefail
 
-VERSION="1.0.10"
+VERSION="1.0.11"
 
 COMMAND=""
 DIR_FLAG=""
@@ -60,7 +60,7 @@ if [ -n "$DIR_FLAG" ]; then
   if [ -z "$COMMAND" ]; then
     wt.exe -w new -p Ubuntu --title "$dirname" --tabColor "$color" --suppressApplicationTitle -d "$winpath"
     sleep 1
-    wt.exe -w last new-tab -p Ubuntu --title "$dirname directory" --suppressApplicationTitle -d "$winpath"
+    wt.exe -w last new-tab -p Ubuntu --title "$dirname directory" --suppressApplicationTitle -d "$winpath" \; focus-tab -t 0
     exit 0
   fi
 
@@ -166,7 +166,7 @@ PSEOF
   WIN_PS1=$(wslpath -w "$PS1_FILE")
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WIN_PS1" </dev/null
   rm -rf "$TMP_DIR"
-  wt.exe -w last new-tab -p Ubuntu --title "$dirname directory" --suppressApplicationTitle -d "$winpath"
+  wt.exe -w last new-tab -p Ubuntu --title "$dirname directory" --suppressApplicationTitle -d "$winpath" \; focus-tab -t 0
   exit 0
 fi
 
@@ -484,7 +484,8 @@ foreach ($it in $items) {
       '-w','last','new-tab','-p','Ubuntu',
       '--title',"`"$($it.Title) directory`"",
       '--suppressApplicationTitle',
-      '-d',"`"$($it.Dir)`""
+      '-d',"`"$($it.Dir)`"",
+      ';','focus-tab','-t','0'
     )
   } else {
     Write-Warning "Could not locate window for '$($it.Title)' to position it."
