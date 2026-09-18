@@ -3,7 +3,7 @@
 # Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
 set -uo pipefail
 
-VERSION="1.0.9"
+VERSION="1.0.10"
 
 COMMAND=""
 DIR_FLAG=""
@@ -482,9 +482,9 @@ foreach ($it in $items) {
     }
     Start-Process wt.exe -ArgumentList @(
       '-w','last','new-tab','-p','Ubuntu',
-      '--title',"$($it.Title) directory",
+      '--title',"`"$($it.Title) directory`"",
       '--suppressApplicationTitle',
-      '-d',$it.Dir
+      '-d',"`"$($it.Dir)`""
     )
   } else {
     Write-Warning "Could not locate window for '$($it.Title)' to position it."
