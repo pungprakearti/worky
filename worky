@@ -3,7 +3,7 @@
 # Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
 set -uo pipefail
 
-VERSION="1.0.12"
+VERSION="1.0.13"
 
 COMMAND=""
 DIR_FLAG=""
@@ -203,7 +203,7 @@ if [ -z "${MON_X:-}" ]; then
   exit 1
 fi
 
-mapfile -t DIRS < <(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+mapfile -t DIRS < <(find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -type d -not -name '.*' -printf '%f\n' | sort)
 if [ "${#DIRS[@]}" -eq 0 ]; then
   echo "No directories found in $PROJECTS_DIR" >&2
   exit 1
@@ -211,6 +211,19 @@ fi
 
 cursor=0
 selected=()
+
+# lay out DIRS in a grid: columns adapt to terminal width (capped at 4)
+max_name_len=0
+for d in "${DIRS[@]}"; do
+  [ "${#d}" -gt "$max_name_len" ] && max_name_len=${#d}
+done
+CELL_WIDTH=$((max_name_len + 8))
+TERM_COLS=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+COLS=$((TERM_COLS / CELL_WIDTH))
+[ "$COLS" -lt 1 ] && COLS=1
+[ "$COLS" -gt 4 ] && COLS=4
+[ "$COLS" -gt "${#DIRS[@]}" ] && COLS=${#DIRS[@]}
+ROWS=$(((${#DIRS[@]} + COLS - 1) / COLS))
 
 is_selected() {
   local idx=$1 s
@@ -248,23 +261,29 @@ deselect_cursor() {
 draw() {
   clear
   echo -e "${BOLD}worky${RESET} - ${PROJECTS_DIR}"
-  echo -e "${DIM}up/down move, right select, left deselect, enter launch, q quit${RESET}"
+  echo -e "${DIM}arrows move, space select/deselect, enter launch, q quit${RESET}"
   echo
-  local i=0 d rank
-  for d in "${DIRS[@]}"; do
-    rank=$(selection_rank "$i")
-    if [ "$i" -eq "$cursor" ]; then
-      printf "%-4s " "${rank:+[$rank]}"
-      echo -e "${TEAL}${BOLD}> ${d}${RESET}"
-    else
-      printf "%-4s " "${rank:+[$rank]}"
-      if [ -n "$rank" ]; then
-        echo -e "${SEL}  ${d}${RESET}"
+  local row col i d rank cell
+  for ((row = 0; row < ROWS; row++)); do
+    for ((col = 0; col < COLS; col++)); do
+      i=$((row * COLS + col))
+      [ "$i" -ge "${#DIRS[@]}" ] && continue
+      d="${DIRS[$i]}"
+      rank=$(selection_rank "$i")
+      cell=$(printf "%-4s %s" "${rank:+[$rank]}" "$d")
+      if [ "$i" -eq "$cursor" ]; then
+        printf "%b" "${TEAL}${BOLD}> "
+        printf "%-*s" "$CELL_WIDTH" "$cell"
+        printf "%b" "${RESET}"
+      elif [ -n "$rank" ]; then
+        printf "%b" "${SEL}  "
+        printf "%-*s" "$CELL_WIDTH" "$cell"
+        printf "%b" "${RESET}"
       else
-        echo "  ${d}"
+        printf "  %-*s" "$CELL_WIDTH" "$cell"
       fi
-    fi
-    i=$((i + 1))
+    done
+    echo
   done
   echo
   echo "Selected: ${#selected[@]}/${MAX_SELECT}"
@@ -280,14 +299,44 @@ read_key() {
   printf '%s' "$key"
 }
 
+toggle_cursor() {
+  if is_selected "$cursor"; then
+    deselect_cursor
+  else
+    select_cursor
+  fi
+}
+
 while true; do
   draw
   key=$(read_key)
+  row=$((cursor / COLS))
+  col=$((cursor % COLS))
   case "$key" in
-  $'\x1b[A') cursor=$(((cursor - 1 + ${#DIRS[@]}) % ${#DIRS[@]})) ;;
-  $'\x1b[B') cursor=$(((cursor + 1) % ${#DIRS[@]})) ;;
-  $'\x1b[C') select_cursor ;;
-  $'\x1b[D') deselect_cursor ;;
+  $'\x1b[A') # up: previous row in this column, wrapping to the last row that has this column
+    new_row=$row
+    while true; do
+      new_row=$(((new_row - 1 + ROWS) % ROWS))
+      candidate=$((new_row * COLS + col))
+      [ "$candidate" -lt "${#DIRS[@]}" ] && cursor=$candidate && break
+    done
+    ;;
+  $'\x1b[B') # down: next row in this column, wrapping to row 0
+    new_row=$row
+    while true; do
+      new_row=$(((new_row + 1) % ROWS))
+      candidate=$((new_row * COLS + col))
+      if [ "$candidate" -lt "${#DIRS[@]}" ]; then
+        cursor=$candidate
+        break
+      elif [ "$new_row" -eq "$row" ]; then
+        break
+      fi
+    done
+    ;;
+  $'\x1b[C') [ "$((cursor + 1))" -lt "${#DIRS[@]}" ] && [ "$((col + 1))" -lt "$COLS" ] && cursor=$((cursor + 1)) ;;
+  $'\x1b[D') [ "$col" -gt 0 ] && cursor=$((cursor - 1)) ;;
+  " ") toggle_cursor ;;
   q | Q)
     clear
     echo "Cancelled."

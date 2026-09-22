@@ -6,11 +6,12 @@ screen, with an optional command typed into each one on launch.
 
 Two modes:
 
-- **Picker mode** (no flags, or just `-c`): shows an interactive list of the
-  subdirectories in your current working directory, lets you select up to 4
-  of them, then opens one Windows Terminal window per selection and snaps
-  them into place (maximize / halves / thirds / quadrants depending on how
-  many you picked).
+- **Picker mode** (no flags, or just `-c`): shows an interactive grid of the
+  non-hidden subdirectories in your current working directory (up to 4
+  columns, adapting to your terminal width), lets you select up to 4 of them,
+  then opens one Windows Terminal window per selection and snaps them into
+  place (maximize / halves / thirds / quadrants depending on how many you
+  picked).
 - **Direct mode** (`-d PATH`): skips the picker and opens a single terminal
   for the given path.
 
@@ -69,8 +70,9 @@ Notes:
 
 ## Picker mode (default)
 
-Running `worky` with no `-d` flag lists every immediate subdirectory of the
-current directory:
+Running `worky` with no `-d` flag lists every immediate, non-hidden
+subdirectory of the current directory (directories starting with `.` are
+skipped) in a grid of up to 4 columns:
 
 ```bash
 cd ~/projects
@@ -81,9 +83,8 @@ Controls inside the picker:
 
 | Key | Action |
 |-----|--------|
-| Up / Down | Move the cursor |
-| Right | Select the highlighted directory (up to 4) |
-| Left | Deselect the highlighted directory |
+| Up / Down / Left / Right | Move the cursor around the grid |
+| Space | Select or deselect the highlighted directory (up to 4) |
 | Enter | Launch terminals for everything selected |
 | q / Q | Cancel and exit without launching anything |
 
@@ -143,7 +144,7 @@ worky -d ~/projects/my-app -c "npm run dev"
 
 ## How it works (brief)
 
-- Picker mode enumerates directories with `find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -type d`.
+- Picker mode enumerates directories with `find "$PROJECTS_DIR" -mindepth 1 -maxdepth 1 -type d -not -name '.*'`.
 - For each selected/direct target, `worky` launches `wt.exe` with `-p Ubuntu`,
   a `--title`, and a `--tabColor`, pointed at the Windows path for that
   directory (converted via `wslpath -w`).
