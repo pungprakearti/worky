@@ -3,7 +3,7 @@
 # Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
 set -uo pipefail
 
-VERSION="1.0.13"
+VERSION="1.0.14"
 
 COMMAND=""
 DIR_FLAG=""
@@ -270,17 +270,22 @@ draw() {
       [ "$i" -ge "${#DIRS[@]}" ] && continue
       d="${DIRS[$i]}"
       rank=$(selection_rank "$i")
-      cell=$(printf "%-4s %s" "${rank:+[$rank]}" "$d")
       if [ "$i" -eq "$cursor" ]; then
-        printf "%b" "${TEAL}${BOLD}> "
+        prefix="> "
+      else
+        prefix="${rank:+[$rank] }"
+      fi
+      cell=$(printf "%-4s%s" "$prefix" "$d")
+      if [ "$i" -eq "$cursor" ]; then
+        printf "%b" "${TEAL}${BOLD}"
         printf "%-*s" "$CELL_WIDTH" "$cell"
         printf "%b" "${RESET}"
       elif [ -n "$rank" ]; then
-        printf "%b" "${SEL}  "
+        printf "%b" "${SEL}"
         printf "%-*s" "$CELL_WIDTH" "$cell"
         printf "%b" "${RESET}"
       else
-        printf "  %-*s" "$CELL_WIDTH" "$cell"
+        printf "%-*s" "$CELL_WIDTH" "$cell"
       fi
     done
     echo
