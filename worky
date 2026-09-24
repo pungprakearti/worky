@@ -3,7 +3,7 @@
 # Windows Terminal (WSL Ubuntu) window, tabColor-tagged, tiled into screen quadrants.
 set -uo pipefail
 
-VERSION="1.0.14"
+VERSION="1.0.15"
 
 COMMAND=""
 DIR_FLAG=""
@@ -176,7 +176,7 @@ TMP_DIR="$SCRIPT_DIR/.worky-tmp"
 
 QUAD_NAMES=("top-left" "top-right" "bottom-left" "bottom-right")
 
-TEAL='\033[38;5;30m'
+ORANGE='\033[38;5;208m'
 SEL='\033[38;5;114m'
 BOLD='\033[1m'
 DIM='\033[2m'
@@ -275,18 +275,16 @@ draw() {
       else
         prefix="${rank:+[$rank] }"
       fi
-      cell=$(printf "%-4s%s" "$prefix" "$d")
-      if [ "$i" -eq "$cursor" ]; then
-        printf "%b" "${TEAL}${BOLD}"
-        printf "%-*s" "$CELL_WIDTH" "$cell"
-        printf "%b" "${RESET}"
-      elif [ -n "$rank" ]; then
-        printf "%b" "${SEL}"
-        printf "%-*s" "$CELL_WIDTH" "$cell"
-        printf "%b" "${RESET}"
-      else
-        printf "%-*s" "$CELL_WIDTH" "$cell"
-      fi
+      # selected names are always green; the cursor is orange (marker only,
+      # when it sits on a selected item, so the selection stays visible)
+      name_color=""
+      [ "$i" -eq "$cursor" ] && name_color="${ORANGE}${BOLD}"
+      [ -n "$rank" ] && name_color="${SEL}"
+      [ -n "$rank" ] && [ "$i" -eq "$cursor" ] && name_color="${SEL}${BOLD}"
+      prefix_color="$name_color"
+      [ "$i" -eq "$cursor" ] && prefix_color="${ORANGE}${BOLD}"
+      printf "%b%-4s%b" "$prefix_color" "$prefix" "$RESET"
+      printf "%b%-*s%b" "$name_color" "$((CELL_WIDTH - 4))" "$d" "$RESET"
     done
     echo
   done
